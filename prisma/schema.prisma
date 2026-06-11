@@ -1,0 +1,70 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Content {
+  id              String   @id @default(cuid())
+  sourceKey       String   @unique
+  sheetName       String
+  sheetRow        Int
+
+  type            String
+  title           String
+  imageUrl        String?
+  sourceImageUrl  String?
+
+  author          String?
+  doujinshiTitle  String?
+  doujinka        String?
+  fanficTitle     String?
+  cp              String?
+  originalWork    String?
+
+  purityTags      String[]
+  status          String?
+  noteTags        String[]
+  warningTags     String[]
+  genres          String[]
+  summary         String?  @db.Text
+  xuatBan         String?
+  whereToAccess   String?
+
+  reviews         Review[]
+  messages        Message[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([type])
+  @@index([title])
+  @@index([sheetName])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  rating    Int
+  comment   String?  @db.Text
+  userId    String
+  contentId String
+  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([contentId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  text      String   @db.Text
+  userId    String
+  contentId String
+  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([contentId])
+}
