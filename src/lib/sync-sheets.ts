@@ -9,10 +9,13 @@ import {
   type ContentType,
 } from "./sheet-mapping";
 
-const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID ?? "1SREzjYFG__kz-PUOdqMzMQEO3BVmOFOMdFijWzyszj0";
+const SPREADSHEET_ID =
+  process.env.GOOGLE_SPREADSHEET_ID ??
+  "1SREzjYFG__kz-PUOdqMzMQEO3BVmOFOMdFijWzyszj0";
+
 const DEFAULT_BATCH_SIZE = 100;
-const HEADER_ROW_NUMBER = 3; // sheet row 3
-const DATA_START_ROW_NUMBER = 4; // sheet row 4
+const HEADER_ROW_NUMBER = 3; // row 3
+const DATA_START_ROW_NUMBER = 4; // row 4
 
 export type SyncBatchResult = {
   ok: true;
@@ -29,8 +32,30 @@ export type SyncBatchResult = {
   skippedRows: number;
 };
 
-function log(...args: unknown[]) {
-  console.log("[junai-sync]", ...args);
+export type SyncCursor = {
+  sheetIndex: number;
+  batchStart: number;
+};
+
+export type SyncWorkbookChunkResult = {
+  ok: true;
+  done: boolean;
+  nextCursor: SyncCursor | null;
+  batchesRun: number;
+  sheets: SyncBatchResult[];
+  totals: {
+    processedRows: number;
+    savedRows: number;
+    skippedRows: number;
+  };
+};
+
+function log(scope: string, message: string, data?: unknown) {
+  if (data === undefined) {
+    console.log(`[junai-sync][${scope}] ${message}`);
+    return;
+  }
+  console.log(`[junai-sync][${scope}] ${message}`, data);
 }
 
 function normalizeText(value: unknown): string {
@@ -81,9 +106,9 @@ function detectHeaderRow(
   sheetName: SheetName
 ) {
   const candidates = collectHeaderCandidates(mapping);
+  const scanLimit = Math.min(10, rows.length);
 
   const row3Index = HEADER_ROW_NUMBER - 1;
-  const scanLimit = Math.min(10, rows.length);
 
   let bestIndex = row3Index;
   let bestScore = rows[row3Index]
@@ -93,6 +118,7 @@ function detectHeaderRow(
   for (let i = 0; i < scanLimit; i++) {
     const row = rows[i] ?? [];
     const score = scoreHeaderRow(row, candidates);
+
     if (score > bestScore) {
       bestScore = score;
       bestIndex = i;
@@ -101,7 +127,7 @@ function detectHeaderRow(
 
   const headers = (rows[bestIndex] ?? []).map((h) => String(h).trim());
 
-  log(`[${sheetName}] header detection`, {
+  log(sheetName, "header detected", {
     bestIndex,
     headerRowNumber: bestIndex + 1,
     bestScore,
@@ -129,7 +155,11 @@ function findHeaderIndex(headers: string[], candidates: string[]): number {
   return -1;
 }
 
-function getCell(headers: string[], row: string[], candidates: string[]): string | null {
+function getCell(
+  headers: string[],
+  row: string[],
+  candidates: string[]
+): string | null {
   const idx = findHeaderIndex(headers, candidates);
   if (idx < 0) return null;
 
@@ -203,8 +233,11 @@ export async function syncSheetBatch(
   batchStart: number,
   batchSize: number = DEFAULT_BATCH_SIZE
 ): Promise<SyncBatchResult> {
+  const scope = `${sheetName}#${batchStart}`;
   const mapping = SHEET_MAPPING[sheetName];
   if (!mapping) throw new Error(`Unknown sheet: ${sheetName}`);
+
+  log(scope, "batch start", { batchStart, batchSize });
 
   const sheets = await getSheetsClient();
 
@@ -216,6 +249,8 @@ export async function syncSheetBatch(
   });
 
   const rows = res.data.values ?? [];
+  log(scope, "rows fetched", { totalRawRows: rows.length });
+
   if (rows.length === 0) {
     return {
       ok: true,
@@ -242,10 +277,10 @@ export async function syncSheetBatch(
   } = detectHeaderRow(rows, mapping, sheetName);
 
   if (bestScore < 2) {
-    log(`[${sheetName}] low header score`, {
+    log(scope, "warning low header score", {
       headerRowNumber,
       bestScore,
-      preview: rows[HEADER_ROW_NUMBER - 1]?.slice(0, 12),
+      expectedAtRow3: rows[HEADER_ROW_NUMBER - 1]?.slice(0, 12),
     });
   }
 
@@ -254,18 +289,33 @@ export async function syncSheetBatch(
   const end = Math.min(batchStart + batchSize, totalRows);
   const batchRows = dataRows.slice(batchStart, end);
 
+  log(scope, "batch resolved", {
+    headerRowNumber,
+    dataStartRowNumber,
+    totalRows,
+    batchRows: batchRows.length,
+    startRowNumber: dataStartRowNumber + batchStart,
+    endRowNumber: dataStartRowNumber + batchStart + batchRows.length - 1,
+  });
+
   let processedRows = 0;
   let savedRows = 0;
   let skippedRows = 0;
 
   for (let i = 0; i < batchRows.length; i++) {
     const row = batchRows[i];
-    const sheetRow = dataStartRowIndex + batchStart + i + 1; // 1-based row number
+    const sheetRow = dataStartRowIndex + batchStart + i + 1;
     const sourceKey = `${sheetName}:${sheetRow}`;
 
     const title = getCell(headers, row, mapping.titleCols);
     if (!title) {
       skippedRows += 1;
+      if (skippedRows <= 5) {
+        log(scope, "skip missing title", {
+          sheetRow,
+          rowPreview: row.slice(0, 12),
+        });
+      }
       continue;
     }
 
@@ -335,10 +385,27 @@ export async function syncSheetBatch(
     });
 
     savedRows += 1;
+
+    if (processedRows % 25 === 0) {
+      log(scope, "progress", {
+        processedRows,
+        savedRows,
+        skippedRows,
+        lastSheetRow: sheetRow,
+      });
+    }
   }
 
   const done = end >= totalRows;
   const nextBatch = done ? null : batchStart + batchSize;
+
+  log(scope, "batch done", {
+    processedRows,
+    savedRows,
+    skippedRows,
+    done,
+    nextBatch,
+  });
 
   return {
     ok: true,
@@ -356,23 +423,75 @@ export async function syncSheetBatch(
   };
 }
 
-export async function syncWorkbook() {
-  const summary = {
-    ok: true as const,
-    sheets: [] as Awaited<ReturnType<typeof syncSheetBatch>>[],
-  };
+export async function syncWorkbookChunk(
+  cursor?: Partial<SyncCursor> | null,
+  maxBatchesPerRun: number = 2,
+  batchSize: number = DEFAULT_BATCH_SIZE
+): Promise<SyncWorkbookChunkResult> {
+  let sheetIndex = Math.max(0, cursor?.sheetIndex ?? 0);
+  let batchStart = Math.max(0, cursor?.batchStart ?? 0);
 
-  for (const sheetName of SHEET_NAMES) {
-    let batchStart = 0;
+  const sheets: SyncBatchResult[] = [];
+  let batchesRun = 0;
+  let processedRows = 0;
+  let savedRows = 0;
+  let skippedRows = 0;
 
-    while (true) {
-      const result = await syncSheetBatch(sheetName, batchStart, DEFAULT_BATCH_SIZE);
-      summary.sheets.push(result);
+  log("workbook", "chunk start", {
+    sheetIndex,
+    batchStart,
+    maxBatchesPerRun,
+    batchSize,
+  });
 
-      if (result.done || result.nextBatch === null) break;
-      batchStart = result.nextBatch;
+  while (sheetIndex < SHEET_NAMES.length && batchesRun < maxBatchesPerRun) {
+    const sheetName = SHEET_NAMES[sheetIndex];
+    log("workbook", "run batch", {
+      sheetIndex,
+      sheetName,
+      batchStart,
+      batchesRun,
+    });
+
+    const result = await syncSheetBatch(sheetName, batchStart, batchSize);
+    sheets.push(result);
+
+    batchesRun += 1;
+    processedRows += result.processedRows;
+    savedRows += result.savedRows;
+    skippedRows += result.skippedRows;
+
+    if (result.done || result.nextBatch === null) {
+      sheetIndex += 1;
+      batchStart = 0;
+      continue;
     }
+
+    batchStart = result.nextBatch;
   }
 
-  return summary;
+  const done = sheetIndex >= SHEET_NAMES.length;
+  const nextCursor = done ? null : { sheetIndex, batchStart };
+
+  log("workbook", "chunk done", {
+    done,
+    nextCursor,
+    batchesRun,
+    processedRows,
+    savedRows,
+    skippedRows,
+  });
+
+  return {
+    ok: true,
+    done,
+    nextCursor,
+    batchesRun,
+    sheets,
+    totals: {
+      processedRows,
+      savedRows,
+      skippedRows,
+    },
+  };
 }
