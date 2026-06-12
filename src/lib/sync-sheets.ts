@@ -288,7 +288,7 @@ export async function syncSheetBatch(
 
   for (let i = 0; i < batchRows.length; i++) {
     const row = batchRows[i];
-    const sheetRow = dataStartRowIndex + batchStart + i + 1; // 1-based row number
+    const sheetRow = dataStartRowIndex + batchStart + i + 1;
     const sourceKey = `${sheetName}:${sheetRow}`;
 
     const title = getCell(headers, row, mapping.titleCols);
@@ -305,18 +305,11 @@ export async function syncSheetBatch(
     const rawImage = getCell(headers, row, mapping.imageCols);
     const sourceImageUrl = normalizeImageSource(rawImage);
 
-    const purityTags = parseMultiValue(
-      getCell(headers, row, COMMON_COLS.purityTags)
-    );
+    const purityTags = parseMultiValue(getCell(headers, row, COMMON_COLS.purityTags));
     const status = getCell(headers, row, COMMON_COLS.status);
-    const noteTags = parseMultiValue(
-      getCell(headers, row, COMMON_COLS.noteTags)
-    );
-    const warningTags = parseMultiValue(
-      getCell(headers, row, COMMON_COLS.warningTags)
-    );
+    const noteTags = parseMultiValue(getCell(headers, row, COMMON_COLS.noteTags));
+    const warningTags = parseMultiValue(getCell(headers, row, COMMON_COLS.warningTags));
     const summary = getCell(headers, row, COMMON_COLS.summary);
-
     const genres = parseMultiValue(getCell(headers, row, mapping.genreCols));
     const whereToAccess = getCell(headers, row, mapping.accessCols);
 
@@ -334,53 +327,37 @@ export async function syncSheetBatch(
       },
     });
 
-    let finalImageUrl = existing?.imageUrl ?? null;
-    let imageState: "none" | "kept" | "uploaded" | "failed" = "none";
+    let finalImageUrl: string | null = existing?.imageUrl ?? null;
+    let finalSourceImageUrl: string | null = existing?.sourceImageUrl ?? null;
 
     if (sourceImageUrl) {
-      const shouldUpload = !existing || existing.sourceImageUrl !== sourceImageUrl;
+      finalSourceImageUrl = sourceImageUrl;
 
-      if (shouldUpload) {
-        log(`[${sheetName}] uploading image`, {
-          sheetRow,
-          title,
-          sourceImageUrl,
-        });
-
+      if (!existing || existing.sourceImageUrl !== sourceImageUrl || !existing.imageUrl) {
         const uploaded = await uploadImageFromUrl(sourceImageUrl);
 
         if (uploaded) {
           finalImageUrl = uploaded;
           imageUploadedRows += 1;
-          imageState = "uploaded";
         } else {
-          finalImageUrl = sourceImageUrl;
           imageFailedRows += 1;
-          imageState = "failed";
+          finalImageUrl = existing?.imageUrl ?? sourceImageUrl;
         }
       } else {
-        finalImageUrl = existing?.imageUrl ?? sourceImageUrl;
         imageKeptRows += 1;
-        imageState = "kept";
+        finalImageUrl = existing.imageUrl;
       }
-    } else if (existing?.imageUrl) {
-      finalImageUrl = existing.imageUrl;
-      imageState = "kept";
+    } else {
+      if (existing?.imageUrl) {
+        finalImageUrl = existing.imageUrl;
+        imageKeptRows += 1;
+      }
+      if (existing?.sourceImageUrl) {
+        finalSourceImageUrl = existing.sourceImageUrl;
+      }
     }
 
-    log(`[${sheetName}] upsert row ${sheetRow}`, {
-      sourceKey,
-      title,
-      imageState,
-      sourceImageUrl,
-      finalImageUrl,
-      purityTagsCount: purityTags.length,
-      noteTagsCount: noteTags.length,
-      warningTagsCount: warningTags.length,
-      genresCount: genres.length,
-    });
-
-    const saved = await prisma.content.upsert({
+    await prisma.content.upsert({
       where: { sourceKey },
       create: {
         sourceKey,
@@ -389,7 +366,7 @@ export async function syncSheetBatch(
         type: mapping.type as ContentType,
         title,
         imageUrl: finalImageUrl,
-        sourceImageUrl,
+        sourceImageUrl: finalSourceImageUrl,
         purityTags,
         status,
         noteTags,
@@ -404,7 +381,7 @@ export async function syncSheetBatch(
         type: mapping.type as ContentType,
         title,
         imageUrl: finalImageUrl,
-        sourceImageUrl,
+        sourceImageUrl: finalSourceImageUrl,
         purityTags,
         status,
         noteTags,
@@ -417,10 +394,6 @@ export async function syncSheetBatch(
     });
 
     savedRows += 1;
-    log(`[${sheetName}] saved row ${sheetRow}`, {
-      id: saved.id,
-      sourceKey,
-    });
   }
 
   const done = end >= totalRows;

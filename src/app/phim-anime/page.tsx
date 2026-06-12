@@ -1,16 +1,17 @@
-// src/app/page.tsx
+// src/app/phim-anime/page.tsx
 import { ContentBrowser } from "@/components/content-browser";
 
-export default async function Home({
+export default async function Page({
   searchParams,
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   return (
     <ContentBrowser
-      title="Tổng hợp nội dung"
-      description="Tìm kiếm và lọc toàn bộ truyện, manga, manhwa, manhua, BL, phim/anime, doujinshi và fanfic."
+      title="Phim / Anime"
+      description="Danh sách phim và anime được phân loại theo sheet riêng."
       searchParams={searchParams}
+      defaultType="PHIM_ANIME"
     />
   );
 }

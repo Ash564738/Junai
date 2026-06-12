@@ -1,16 +1,17 @@
-// src/app/page.tsx
+// src/app/truyen-tranh-bl/page.tsx
 import { ContentBrowser } from "@/components/content-browser";
 
-export default async function Home({
+export default async function Page({
   searchParams,
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
   return (
     <ContentBrowser
-      title="Tổng hợp nội dung"
-      description="Tìm kiếm và lọc toàn bộ truyện, manga, manhwa, manhua, BL, phim/anime, doujinshi và fanfic."
+      title="Truyện tranh BL"
+      description="Danh sách truyện tranh BL, hỗ trợ lọc và tìm kiếm nhanh."
       searchParams={searchParams}
+      defaultType="BL_COMIC"
     />
   );
 }
