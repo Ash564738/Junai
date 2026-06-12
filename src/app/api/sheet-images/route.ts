@@ -10,14 +10,32 @@ type SheetImageRow = {
   sheetName: string;
   sheetRow: number;
   imageUrl: string;
+  dbSheetName?: string;
 };
 
 type Body = {
   rows?: SheetImageRow[];
 };
 
+const SHEET_NAME_MAP: Record<string, string> = {
+  "Copy of Truyện chữ": "Truyện chữ",
+  "Copy of Manga": "Manga",
+  "Copy of Manhwa": "Manhwa",
+  "Copy of Manhua": "Manhua",
+  "Copy of Truyện tranh BL": "Truyện tranh BL",
+  "Copy of Phim/Anime": "Phim/Anime",
+  "Copy of Doujinshi": "Doujinshi",
+  "Copy of Fanfic": "Fanfic",
+};
+
+function resolveDbSheetName(sheetName: string, dbSheetName?: string) {
+  if (dbSheetName?.trim()) return dbSheetName.trim();
+  return SHEET_NAME_MAP[sheetName] ?? sheetName;
+}
+
 export async function POST(req: NextRequest) {
   const auth = req.headers.get("authorization");
+
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -30,6 +48,7 @@ export async function POST(req: NextRequest) {
   }
 
   const rows = Array.isArray(body.rows) ? body.rows : [];
+
   let updated = 0;
   let uploaded = 0;
   let failed = 0;
@@ -41,7 +60,8 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const sourceKey = `${row.sheetName}:${row.sheetRow}`;
+    const dbSheetName = resolveDbSheetName(row.sheetName, row.dbSheetName);
+    const sourceKey = `${dbSheetName}:${row.sheetRow}`;
 
     const existing = await prisma.content.findUnique({
       where: { sourceKey },
