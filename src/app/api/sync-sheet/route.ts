@@ -6,7 +6,7 @@ import { SHEET_NAMES, type SheetName } from "@/lib/sheet-mapping";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 100;
 
 function isSheetName(value: string | null): value is SheetName {
   return !!value && (SHEET_NAMES as readonly string[]).includes(value);
@@ -14,7 +14,6 @@ function isSheetName(value: string | null): value is SheetName {
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
-
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -29,11 +28,6 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const result = await syncSheetBatch(
-    sheet,
-    Number.isFinite(batch) ? batch : 0,
-    BATCH_SIZE
-  );
-
+  const result = await syncSheetBatch(sheet, Number.isFinite(batch) ? batch : 0, BATCH_SIZE);
   return NextResponse.json(result);
 }

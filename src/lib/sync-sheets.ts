@@ -8,14 +8,13 @@ import {
   type SheetName,
   type ContentType,
 } from "./sheet-mapping";
-import { uploadImageFromUrl } from "./image-uploader";
 
-const SPREADSHEET_ID = "1SREzjYFG__kz-PUOdqMzMQEO3BVmOFOMdFijWzyszj0";
-const DEFAULT_BATCH_SIZE = 20;
-const HEADER_SCAN_LIMIT = 10;
-const DEFAULT_HEADER_ROW_INDEX = 2; // row 3 in Google Sheets (0-based index)
+const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID ?? "1SREzjYFG__kz-PUOdqMzMQEO3BVmOFOMdFijWzyszj0";
+const DEFAULT_BATCH_SIZE = 100;
+const HEADER_ROW_NUMBER = 3; // sheet row 3
+const DATA_START_ROW_NUMBER = 4; // sheet row 4
 
-type SyncBatchResult = {
+export type SyncBatchResult = {
   ok: true;
   sheetName: SheetName;
   headerRowNumber: number;
@@ -28,9 +27,6 @@ type SyncBatchResult = {
   processedRows: number;
   savedRows: number;
   skippedRows: number;
-  imageUploadedRows: number;
-  imageKeptRows: number;
-  imageFailedRows: number;
 };
 
 function log(...args: unknown[]) {
@@ -85,17 +81,18 @@ function detectHeaderRow(
   sheetName: SheetName
 ) {
   const candidates = collectHeaderCandidates(mapping);
-  const scanLimit = Math.min(HEADER_SCAN_LIMIT, rows.length);
 
-  let bestIndex = DEFAULT_HEADER_ROW_INDEX;
-  let bestScore = rows[DEFAULT_HEADER_ROW_INDEX]
-    ? scoreHeaderRow(rows[DEFAULT_HEADER_ROW_INDEX], candidates)
+  const row3Index = HEADER_ROW_NUMBER - 1;
+  const scanLimit = Math.min(10, rows.length);
+
+  let bestIndex = row3Index;
+  let bestScore = rows[row3Index]
+    ? scoreHeaderRow(rows[row3Index], candidates)
     : -1;
 
   for (let i = 0; i < scanLimit; i++) {
     const row = rows[i] ?? [];
     const score = scoreHeaderRow(row, candidates);
-
     if (score > bestScore) {
       bestScore = score;
       bestIndex = i;
@@ -108,7 +105,6 @@ function detectHeaderRow(
     bestIndex,
     headerRowNumber: bestIndex + 1,
     bestScore,
-    candidatesChecked: candidates.length,
     headersPreview: headers.slice(0, 12),
   });
 
@@ -133,11 +129,7 @@ function findHeaderIndex(headers: string[], candidates: string[]): number {
   return -1;
 }
 
-function getCell(
-  headers: string[],
-  row: string[],
-  candidates: string[]
-): string | null {
+function getCell(headers: string[], row: string[], candidates: string[]): string | null {
   const idx = findHeaderIndex(headers, candidates);
   if (idx < 0) return null;
 
@@ -147,7 +139,6 @@ function getCell(
 
 function parseMultiValue(value: string | null): string[] {
   if (!value) return [];
-
   return value
     .split(/[\n,;|、]+/g)
     .map((s) => s.trim())
@@ -215,20 +206,16 @@ export async function syncSheetBatch(
   const mapping = SHEET_MAPPING[sheetName];
   if (!mapping) throw new Error(`Unknown sheet: ${sheetName}`);
 
-  log(`[${sheetName}] sync start`, { batchStart, batchSize });
-
   const sheets = await getSheetsClient();
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:Z`,
+    range: `${sheetName}!A:ZZ`,
     valueRenderOption: "FORMULA",
     dateTimeRenderOption: "FORMATTED_STRING",
   });
 
   const rows = res.data.values ?? [];
-  log(`[${sheetName}] raw rows fetched`, { totalRawRows: rows.length });
-
   if (rows.length === 0) {
     return {
       ok: true,
@@ -243,9 +230,6 @@ export async function syncSheetBatch(
       processedRows: 0,
       savedRows: 0,
       skippedRows: 0,
-      imageUploadedRows: 0,
-      imageKeptRows: 0,
-      imageFailedRows: 0,
     };
   }
 
@@ -258,10 +242,10 @@ export async function syncSheetBatch(
   } = detectHeaderRow(rows, mapping, sheetName);
 
   if (bestScore < 2) {
-    log(`[${sheetName}] warning: header detection score is low`, {
+    log(`[${sheetName}] low header score`, {
       headerRowNumber,
       bestScore,
-      expectedAtRow3: rows[DEFAULT_HEADER_ROW_INDEX]?.slice(0, 12),
+      preview: rows[HEADER_ROW_NUMBER - 1]?.slice(0, 12),
     });
   }
 
@@ -270,33 +254,18 @@ export async function syncSheetBatch(
   const end = Math.min(batchStart + batchSize, totalRows);
   const batchRows = dataRows.slice(batchStart, end);
 
-  log(`[${sheetName}] batch resolved`, {
-    headerRowNumber,
-    dataStartRowNumber,
-    totalRows,
-    batchRows: batchRows.length,
-    startRowNumber: dataStartRowNumber + batchStart,
-    endRowNumber: dataStartRowNumber + batchStart + batchRows.length - 1,
-  });
-
   let processedRows = 0;
   let savedRows = 0;
   let skippedRows = 0;
-  let imageUploadedRows = 0;
-  let imageKeptRows = 0;
-  let imageFailedRows = 0;
 
   for (let i = 0; i < batchRows.length; i++) {
     const row = batchRows[i];
-    const sheetRow = dataStartRowIndex + batchStart + i + 1;
+    const sheetRow = dataStartRowIndex + batchStart + i + 1; // 1-based row number
     const sourceKey = `${sheetName}:${sheetRow}`;
 
     const title = getCell(headers, row, mapping.titleCols);
     if (!title) {
       skippedRows += 1;
-      log(`[${sheetName}] skip row ${sheetRow}: missing title`, {
-        rowPreview: row.slice(0, 12),
-      });
       continue;
     }
 
@@ -321,41 +290,13 @@ export async function syncSheetBatch(
     const existing = await prisma.content.findUnique({
       where: { sourceKey },
       select: {
-        id: true,
         imageUrl: true,
         sourceImageUrl: true,
       },
     });
 
-    let finalImageUrl: string | null = existing?.imageUrl ?? null;
-    let finalSourceImageUrl: string | null = existing?.sourceImageUrl ?? null;
-
-    if (sourceImageUrl) {
-      finalSourceImageUrl = sourceImageUrl;
-
-      if (!existing || existing.sourceImageUrl !== sourceImageUrl || !existing.imageUrl) {
-        const uploaded = await uploadImageFromUrl(sourceImageUrl);
-
-        if (uploaded) {
-          finalImageUrl = uploaded;
-          imageUploadedRows += 1;
-        } else {
-          imageFailedRows += 1;
-          finalImageUrl = existing?.imageUrl ?? sourceImageUrl;
-        }
-      } else {
-        imageKeptRows += 1;
-        finalImageUrl = existing.imageUrl;
-      }
-    } else {
-      if (existing?.imageUrl) {
-        finalImageUrl = existing.imageUrl;
-        imageKeptRows += 1;
-      }
-      if (existing?.sourceImageUrl) {
-        finalSourceImageUrl = existing.sourceImageUrl;
-      }
-    }
+    const finalImageUrl = sourceImageUrl ?? existing?.imageUrl ?? null;
+    const finalSourceImageUrl = sourceImageUrl ?? existing?.sourceImageUrl ?? null;
 
     await prisma.content.upsert({
       where: { sourceKey },
@@ -399,17 +340,6 @@ export async function syncSheetBatch(
   const done = end >= totalRows;
   const nextBatch = done ? null : batchStart + batchSize;
 
-  log(`[${sheetName}] batch done`, {
-    processedRows,
-    savedRows,
-    skippedRows,
-    imageUploadedRows,
-    imageKeptRows,
-    imageFailedRows,
-    done,
-    nextBatch,
-  });
-
   return {
     ok: true,
     sheetName,
@@ -423,9 +353,6 @@ export async function syncSheetBatch(
     processedRows,
     savedRows,
     skippedRows,
-    imageUploadedRows,
-    imageKeptRows,
-    imageFailedRows,
   };
 }
 
@@ -438,8 +365,6 @@ export async function syncWorkbook() {
   for (const sheetName of SHEET_NAMES) {
     let batchStart = 0;
 
-    log(`[${sheetName}] workbook sync start`);
-
     while (true) {
       const result = await syncSheetBatch(sheetName, batchStart, DEFAULT_BATCH_SIZE);
       summary.sheets.push(result);
@@ -447,8 +372,6 @@ export async function syncWorkbook() {
       if (result.done || result.nextBatch === null) break;
       batchStart = result.nextBatch;
     }
-
-    log(`[${sheetName}] workbook sync finished`);
   }
 
   return summary;
