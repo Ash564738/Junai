@@ -5,13 +5,16 @@ import { syncWorkbookChunk, type SyncCursor } from "@/lib/sync-sheets";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function getAuth(request: NextRequest) {
-  return request.headers.get("authorization") ?? "";
+function authOk(request: NextRequest) {
+  return request.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`;
 }
 
-function readCursorFromUrl(url: URL): SyncCursor | null {
-  const sheetIndex = Number.parseInt(url.searchParams.get("sheetIndex") ?? "", 10);
-  const batchStart = Number.parseInt(url.searchParams.get("batchStart") ?? "", 10);
+function parseCursorFromUrl(url: URL): SyncCursor | null {
+  const sheetIndexRaw = url.searchParams.get("sheetIndex");
+  const batchStartRaw = url.searchParams.get("batchStart");
+
+  const sheetIndex = sheetIndexRaw === null ? NaN : Number.parseInt(sheetIndexRaw, 10);
+  const batchStart = batchStartRaw === null ? NaN : Number.parseInt(batchStartRaw, 10);
 
   if (!Number.isFinite(sheetIndex) && !Number.isFinite(batchStart)) return null;
 
@@ -22,37 +25,35 @@ function readCursorFromUrl(url: URL): SyncCursor | null {
 }
 
 async function handle(request: NextRequest) {
-  const authHeader = getAuth(request);
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!authOk(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let bodyCursor: SyncCursor | null = null;
+  let cursor: SyncCursor | null = null;
   let maxBatches = 2;
 
   if (request.method === "POST") {
     try {
       const body = await request.json();
       if (body?.cursor) {
-        bodyCursor = {
+        cursor = {
           sheetIndex: Number(body.cursor.sheetIndex) || 0,
           batchStart: Number(body.cursor.batchStart) || 0,
         };
       }
-      if (Number.isFinite(Number(body?.maxBatches))) {
-        maxBatches = Math.max(1, Number(body.maxBatches));
+      if (body?.maxBatches !== undefined) {
+        maxBatches = Math.max(1, Number(body.maxBatches) || 2);
       }
     } catch {
-      bodyCursor = null;
+      cursor = null;
     }
   } else {
-    bodyCursor = readCursorFromUrl(request.nextUrl);
-    const qMax = Number.parseInt(request.nextUrl.searchParams.get("maxBatches") ?? "", 10);
-    if (Number.isFinite(qMax)) maxBatches = Math.max(1, qMax);
+    cursor = parseCursorFromUrl(request.nextUrl);
+    const qMax = request.nextUrl.searchParams.get("maxBatches");
+    if (qMax !== null) maxBatches = Math.max(1, Number.parseInt(qMax, 10) || 2);
   }
 
-  const result = await syncWorkbookChunk(bodyCursor, maxBatches, 100);
-
+  const result = await syncWorkbookChunk(cursor, maxBatches, 100);
   return NextResponse.json(result);
 }
 

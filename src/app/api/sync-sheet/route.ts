@@ -13,8 +13,7 @@ function isSheetName(value: string | null): value is SheetName {
 }
 
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -22,10 +21,7 @@ export async function GET(request: NextRequest) {
   const batch = Number.parseInt(request.nextUrl.searchParams.get("batch") ?? "0", 10);
 
   if (!isSheetName(sheet)) {
-    return NextResponse.json(
-      { error: "Missing or invalid sheet parameter" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Missing or invalid sheet parameter" }, { status: 400 });
   }
 
   const result = await syncSheetBatch(sheet, Number.isFinite(batch) ? batch : 0, BATCH_SIZE);

@@ -14,8 +14,7 @@ const SPREADSHEET_ID =
   "1SREzjYFG__kz-PUOdqMzMQEO3BVmOFOMdFijWzyszj0";
 
 const DEFAULT_BATCH_SIZE = 100;
-const HEADER_ROW_NUMBER = 3; // row 3
-const DATA_START_ROW_NUMBER = 4; // row 4
+const HEADER_ROW_NUMBER = 3;
 
 export type SyncBatchResult = {
   ok: true;
