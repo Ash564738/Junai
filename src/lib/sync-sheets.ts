@@ -68,6 +68,10 @@ function uniq(values: string[]): string[] {
   return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
 }
 
+function escapeSheetName(sheetName: string) {
+  return `'${sheetName.replace(/'/g, "''")}'`;
+}
+
 function collectHeaderCandidates(mapping: (typeof SHEET_MAPPING)[SheetName]) {
   const specialCols = Object.values(mapping.specialCols).reduce<string[]>(
     (acc, cols) => acc.concat(cols),
@@ -242,7 +246,7 @@ export async function syncSheetBatch(
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:ZZ`,
+    range: `${escapeSheetName(sheetName)}!A:ZZ`,
     valueRenderOption: "FORMULA",
     dateTimeRenderOption: "FORMATTED_STRING",
   });
@@ -493,4 +497,25 @@ export async function syncWorkbookChunk(
       skippedRows,
     },
   };
+}
+
+export async function syncWorkbook() {
+  const summary = {
+    ok: true as const,
+    sheets: [] as Awaited<ReturnType<typeof syncSheetBatch>>[],
+  };
+
+  for (const sheetName of SHEET_NAMES) {
+    let batchStart = 0;
+
+    while (true) {
+      const result = await syncSheetBatch(sheetName, batchStart, DEFAULT_BATCH_SIZE);
+      summary.sheets.push(result);
+
+      if (result.done || result.nextBatch === null) break;
+      batchStart = result.nextBatch;
+    }
+  }
+
+  return summary;
 }
