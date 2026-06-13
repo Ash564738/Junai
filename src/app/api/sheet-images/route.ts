@@ -8,7 +8,9 @@ export const dynamic = "force-dynamic";
 type SheetImageRow = {
   sheetName: string;
   sheetRow: number;
-  imageUrl: string;
+  sourceImageUrl?: string;
+  cloudinaryUrl?: string;
+  imageUrl?: string;
 };
 
 type Body = {
@@ -30,18 +32,22 @@ export async function POST(req: NextRequest) {
   const rows = Array.isArray(body.rows) ? body.rows : [];
   let updated = 0;
   let skipped = 0;
+  let unchanged = 0;
 
   for (const row of rows) {
-    if (!row?.sheetName || !Number.isFinite(row.sheetRow) || !row.imageUrl) {
+    if (!row?.sheetName || !Number.isFinite(row.sheetRow)) {
       skipped += 1;
       continue;
     }
 
     const sourceKey = `${row.sheetName}:${row.sheetRow}`;
-
     const existing = await prisma.content.findUnique({
       where: { sourceKey },
-      select: { id: true },
+      select: {
+        id: true,
+        imageUrl: true,
+        sourceImageUrl: true,
+      },
     });
 
     if (!existing) {
@@ -49,11 +55,36 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    await prisma.content.updateMany({
+    const incomingSourceImageUrl =
+      row.sourceImageUrl?.trim() ||
+      row.imageUrl?.trim() ||
+      row.cloudinaryUrl?.trim() ||
+      null;
+
+    const incomingFinalImageUrl =
+      row.cloudinaryUrl?.trim() ||
+      row.imageUrl?.trim() ||
+      row.sourceImageUrl?.trim() ||
+      null;
+
+    if (!incomingFinalImageUrl) {
+      skipped += 1;
+      continue;
+    }
+
+    if (
+      existing.sourceImageUrl === incomingSourceImageUrl &&
+      existing.imageUrl === incomingFinalImageUrl
+    ) {
+      unchanged += 1;
+      continue;
+    }
+
+    await prisma.content.update({
       where: { sourceKey },
       data: {
-        sourceImageUrl: row.imageUrl,
-        imageUrl: row.imageUrl,
+        sourceImageUrl: incomingSourceImageUrl,
+        imageUrl: incomingFinalImageUrl,
       },
     });
 
@@ -64,5 +95,6 @@ export async function POST(req: NextRequest) {
     ok: true,
     updated,
     skipped,
+    unchanged,
   });
 }

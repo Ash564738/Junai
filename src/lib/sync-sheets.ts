@@ -29,6 +29,9 @@ export type SyncBatchResult = {
   processedRows: number;
   savedRows: number;
   skippedRows: number;
+  imageUploadedRows: number;
+  imageKeptRows: number;
+  imageFailedRows: number;
 };
 
 export type SyncCursor = {
@@ -268,6 +271,9 @@ export async function syncSheetBatch(
       processedRows: 0,
       savedRows: 0,
       skippedRows: 0,
+      imageUploadedRows: 0,
+      imageKeptRows: 0,
+      imageFailedRows: 0,
     };
   }
 
@@ -304,6 +310,9 @@ export async function syncSheetBatch(
   let processedRows = 0;
   let savedRows = 0;
   let skippedRows = 0;
+  let imageUploadedRows = 0;
+  let imageKeptRows = 0;
+  let imageFailedRows = 0;
 
   for (let i = 0; i < batchRows.length; i++) {
     const row = batchRows[i];
@@ -313,12 +322,10 @@ export async function syncSheetBatch(
     const title = getCell(headers, row, mapping.titleCols);
     if (!title) {
       skippedRows += 1;
-      if (skippedRows <= 5) {
-        log(scope, "skip missing title", {
-          sheetRow,
-          rowPreview: row.slice(0, 12),
-        });
-      }
+      log(scope, "skip missing title", {
+        sheetRow,
+        rowPreview: row.slice(0, 12),
+      });
       continue;
     }
 
@@ -348,8 +355,12 @@ export async function syncSheetBatch(
       },
     });
 
-    const finalImageUrl = sourceImageUrl ?? existing?.imageUrl ?? null;
     const finalSourceImageUrl = sourceImageUrl ?? existing?.sourceImageUrl ?? null;
+    const finalImageUrl = existing?.imageUrl ?? null;
+
+    if (finalImageUrl) {
+      imageKeptRows += 1;
+    }
 
     await prisma.content.upsert({
       where: { sourceKey },
@@ -388,15 +399,6 @@ export async function syncSheetBatch(
     });
 
     savedRows += 1;
-
-    if (processedRows % 25 === 0) {
-      log(scope, "progress", {
-        processedRows,
-        savedRows,
-        skippedRows,
-        lastSheetRow: sheetRow,
-      });
-    }
   }
 
   const done = end >= totalRows;
@@ -406,6 +408,9 @@ export async function syncSheetBatch(
     processedRows,
     savedRows,
     skippedRows,
+    imageUploadedRows,
+    imageKeptRows,
+    imageFailedRows,
     done,
     nextBatch,
   });
@@ -423,6 +428,9 @@ export async function syncSheetBatch(
     processedRows,
     savedRows,
     skippedRows,
+    imageUploadedRows,
+    imageKeptRows,
+    imageFailedRows,
   };
 }
 

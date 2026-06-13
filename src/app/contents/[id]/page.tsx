@@ -5,6 +5,8 @@ import prisma from "@/lib/prisma";
 import { CONTENT_TYPE_LABELS } from "@/components/content-browser";
 import { purityTagStyle, statusClass } from "@/lib/tag-colors";
 
+export const dynamic = "force-dynamic";
+
 export default async function ContentDetailPage({
   params,
 }: {
