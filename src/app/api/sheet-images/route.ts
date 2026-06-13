@@ -9,6 +9,7 @@ type SheetImageRow = {
   sheetName: string;
   sheetRow: number;
   title?: string;
+  contentKey?: string;
   sourceImageUrl?: string | null;
   cloudinaryUrl?: string | null;
   imageUrl?: string | null;
@@ -17,6 +18,18 @@ type SheetImageRow = {
 type Body = {
   rows?: SheetImageRow[];
 };
+
+function normalize(v: string | null | undefined) {
+  return String(v ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function toNull(value: unknown): string | null {
+  const s = String(value ?? "").trim();
+  return s ? s : null;
+}
 
 export async function POST(req: NextRequest) {
   if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -41,59 +54,86 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const sourceKey = `${row.sheetName}:${row.sheetRow}`;
+    const incomingTitle = toNull(row.title);
+    const incomingSourceImageUrl =
+      toNull(row.sourceImageUrl) ||
+      toNull(row.imageUrl) ||
+      toNull(row.cloudinaryUrl);
 
-    const existing = await prisma.content.findUnique({
-      where: { sourceKey },
-      select: {
-        id: true,
-        title: true,
-        imageUrl: true,
-        sourceImageUrl: true,
-      },
-    });
+    const incomingFinalImageUrl =
+      toNull(row.cloudinaryUrl) ||
+      toNull(row.imageUrl) ||
+      toNull(row.sourceImageUrl);
+
+    if (!incomingTitle || !incomingFinalImageUrl) {
+      skipped += 1;
+      continue;
+    }
+
+    let existing:
+      | {
+          id: string;
+          title: string;
+          imageUrl: string | null;
+          sourceImageUrl: string | null;
+        }
+      | null = null;
+
+    if (row.contentKey) {
+      existing = await prisma.content.findUnique({
+        where: { contentKey: row.contentKey },
+        select: {
+          id: true,
+          title: true,
+          imageUrl: true,
+          sourceImageUrl: true,
+        },
+      });
+    }
+
+    if (!existing) {
+      existing = await prisma.content.findFirst({
+        where: {
+          sheetName: row.sheetName,
+          sheetRow: row.sheetRow,
+          title: incomingTitle,
+        },
+        select: {
+          id: true,
+          title: true,
+          imageUrl: true,
+          sourceImageUrl: true,
+        },
+      });
+    }
 
     if (!existing) {
       skipped += 1;
       continue;
     }
 
-    const incomingSourceImageUrl =
-      (row.sourceImageUrl && row.sourceImageUrl.trim()) ||
-      (row.imageUrl && row.imageUrl.trim()) ||
-      (row.cloudinaryUrl && row.cloudinaryUrl.trim()) ||
-      null;
-
-    const incomingFinalImageUrl =
-      (row.cloudinaryUrl && row.cloudinaryUrl.trim()) ||
-      (row.imageUrl && row.imageUrl.trim()) ||
-      (row.sourceImageUrl && row.sourceImageUrl.trim()) ||
-      null;
-
-    if (!incomingFinalImageUrl) {
+    if (normalize(existing.title) !== normalize(incomingTitle)) {
+      console.log(
+        `[sheet-images] title mismatch skipped: sheet=${row.sheetName} row=${row.sheetRow} existing="${existing.title}" incoming="${incomingTitle}"`
+      );
       skipped += 1;
       continue;
     }
 
     if (
-      existing.sourceImageUrl === incomingSourceImageUrl &&
-      existing.imageUrl === incomingFinalImageUrl
+      normalize(existing.sourceImageUrl) === normalize(incomingSourceImageUrl) &&
+      normalize(existing.imageUrl) === normalize(incomingFinalImageUrl)
     ) {
       unchanged += 1;
       continue;
     }
 
-    if (row.title && existing.title && row.title.trim() !== existing.title.trim()) {
-      console.log(
-        `[sheet-images] title changed at ${sourceKey}: existing="${existing.title}" incoming="${row.title}"`
-      );
-    }
-
     await prisma.content.update({
-      where: { sourceKey },
+      where: { id: existing.id },
       data: {
         sourceImageUrl: incomingSourceImageUrl,
         imageUrl: incomingFinalImageUrl,
+        sheetRow: row.sheetRow,
       },
     });
 

@@ -1,6 +1,8 @@
 // src/lib/sync-sheets.ts
 import { google } from "googleapis";
 import prisma from "./prisma";
+import { uploadImageFromUrl } from "./image-uploader";
+import { buildContentKey } from "./content-key";
 import {
   SHEET_MAPPING,
   COMMON_COLS,
@@ -322,10 +324,7 @@ export async function syncSheetBatch(
     const title = getCell(headers, row, mapping.titleCols);
     if (!title) {
       skippedRows += 1;
-      log(scope, "skip missing title", {
-        sheetRow,
-        rowPreview: row.slice(0, 12),
-      });
+      log(scope, "skip missing title", { sheetRow, rowPreview: row.slice(0, 12) });
       continue;
     }
 
@@ -347,24 +346,55 @@ export async function syncSheetBatch(
       specialData[field] = getCell(headers, row, candidates);
     }
 
+    const contentKey = buildContentKey({
+      sheetName,
+      type: mapping.type as ContentType,
+      title,
+      author: specialData.author,
+      cp: specialData.cp,
+      originalWork: specialData.originalWork,
+      doujinka: specialData.doujinka,
+      fanficTitle: specialData.fanficTitle,
+    });
+
     const existing = await prisma.content.findUnique({
-      where: { sourceKey },
+      where: { contentKey },
       select: {
+        id: true,
         imageUrl: true,
         sourceImageUrl: true,
       },
     });
 
-    const finalSourceImageUrl = sourceImageUrl ?? existing?.sourceImageUrl ?? null;
-    const finalImageUrl = existing?.imageUrl ?? null;
+    let finalImageUrl: string | null = existing?.imageUrl ?? null;
+    let finalSourceImageUrl: string | null = existing?.sourceImageUrl ?? null;
 
-    if (finalImageUrl) {
+    if (sourceImageUrl) {
+      finalSourceImageUrl = sourceImageUrl;
+
+      if (!existing || existing.sourceImageUrl !== sourceImageUrl || !existing.imageUrl) {
+        const uploaded = await uploadImageFromUrl(sourceImageUrl);
+
+        if (uploaded) {
+          finalImageUrl = uploaded;
+          imageUploadedRows += 1;
+        } else {
+          imageFailedRows += 1;
+          finalImageUrl = existing?.imageUrl ?? sourceImageUrl;
+        }
+      } else {
+        imageKeptRows += 1;
+        finalImageUrl = existing.imageUrl;
+      }
+    } else if (existing?.imageUrl) {
+      finalImageUrl = existing.imageUrl;
       imageKeptRows += 1;
     }
 
     await prisma.content.upsert({
-      where: { sourceKey },
+      where: { contentKey },
       create: {
+        contentKey,
         sourceKey,
         sheetName,
         sheetRow,
@@ -382,6 +412,8 @@ export async function syncSheetBatch(
         ...specialData,
       },
       update: {
+        sourceKey,
+        sheetName,
         sheetRow,
         type: mapping.type as ContentType,
         title,
@@ -508,22 +540,37 @@ export async function syncWorkbookChunk(
 }
 
 export async function syncWorkbook() {
-  const summary = {
-    ok: true as const,
-    sheets: [] as Awaited<ReturnType<typeof syncSheetBatch>>[],
-  };
+  const allSheets: SyncBatchResult[] = [];
+  let processedRows = 0;
+  let savedRows = 0;
+  let skippedRows = 0;
 
   for (const sheetName of SHEET_NAMES) {
     let batchStart = 0;
 
     while (true) {
       const result = await syncSheetBatch(sheetName, batchStart, DEFAULT_BATCH_SIZE);
-      summary.sheets.push(result);
+      allSheets.push(result);
+
+      processedRows += result.processedRows;
+      savedRows += result.savedRows;
+      skippedRows += result.skippedRows;
 
       if (result.done || result.nextBatch === null) break;
       batchStart = result.nextBatch;
     }
   }
 
-  return summary;
+  return {
+    ok: true as const,
+    done: true,
+    nextCursor: null,
+    batchesRun: allSheets.length,
+    sheets: allSheets,
+    totals: {
+      processedRows,
+      savedRows,
+      skippedRows,
+    },
+  };
 }
