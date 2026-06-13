@@ -1,8 +1,6 @@
 // src/lib/sync-sheets.ts
 import { google } from "googleapis";
 import prisma from "./prisma";
-import { uploadImageFromUrl } from "./image-uploader";
-import { buildContentKey } from "./content-key";
 import {
   SHEET_MAPPING,
   COMMON_COLS,
@@ -10,6 +8,7 @@ import {
   type SheetName,
   type ContentType,
 } from "./sheet-mapping";
+import { buildContentKey, buildSourceKey, normalizeKey } from "./content-key";
 
 const SPREADSHEET_ID =
   process.env.GOOGLE_SPREADSHEET_ID ??
@@ -31,9 +30,6 @@ export type SyncBatchResult = {
   processedRows: number;
   savedRows: number;
   skippedRows: number;
-  imageUploadedRows: number;
-  imageKeptRows: number;
-  imageFailedRows: number;
 };
 
 export type SyncCursor = {
@@ -60,13 +56,6 @@ function log(scope: string, message: string, data?: unknown) {
     return;
   }
   console.log(`[junai-sync][${scope}] ${message}`, data);
-}
-
-function normalizeText(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
 }
 
 function uniq(values: string[]): string[] {
@@ -98,11 +87,11 @@ function collectHeaderCandidates(mapping: (typeof SHEET_MAPPING)[SheetName]) {
 }
 
 function scoreHeaderRow(row: string[], candidates: string[]): number {
-  const rowSet = new Set(row.map((v) => normalizeText(v)));
+  const rowSet = new Set(row.map((v) => normalizeKey(v)));
   let score = 0;
 
   for (const candidate of candidates) {
-    if (rowSet.has(normalizeText(candidate))) score += 1;
+    if (rowSet.has(normalizeKey(candidate))) score += 1;
   }
 
   return score;
@@ -153,10 +142,10 @@ function detectHeaderRow(
 }
 
 function findHeaderIndex(headers: string[], candidates: string[]): number {
-  const normalizedHeaders = headers.map(normalizeText);
+  const normalizedHeaders = headers.map(normalizeKey);
 
   for (const candidate of candidates) {
-    const idx = normalizedHeaders.indexOf(normalizeText(candidate));
+    const idx = normalizedHeaders.indexOf(normalizeKey(candidate));
     if (idx >= 0) return idx;
   }
 
@@ -224,6 +213,28 @@ function normalizeImageSource(raw: string | null): string | null {
   return url;
 }
 
+function resolveFinalImageUrl(params: {
+  existingImageUrl?: string | null;
+  existingSourceImageUrl?: string | null;
+  sourceImageUrl: string | null;
+}): string | null {
+  const { existingImageUrl, existingSourceImageUrl, sourceImageUrl } = params;
+
+  if (!sourceImageUrl) {
+    return existingImageUrl ?? null;
+  }
+
+  if (!existingImageUrl) {
+    return sourceImageUrl;
+  }
+
+  if (existingImageUrl === existingSourceImageUrl) {
+    return sourceImageUrl;
+  }
+
+  return existingImageUrl;
+}
+
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -273,9 +284,6 @@ export async function syncSheetBatch(
       processedRows: 0,
       savedRows: 0,
       skippedRows: 0,
-      imageUploadedRows: 0,
-      imageKeptRows: 0,
-      imageFailedRows: 0,
     };
   }
 
@@ -312,19 +320,22 @@ export async function syncSheetBatch(
   let processedRows = 0;
   let savedRows = 0;
   let skippedRows = 0;
-  let imageUploadedRows = 0;
-  let imageKeptRows = 0;
-  let imageFailedRows = 0;
 
   for (let i = 0; i < batchRows.length; i++) {
     const row = batchRows[i];
     const sheetRow = dataStartRowIndex + batchStart + i + 1;
-    const sourceKey = `${sheetName}:${sheetRow}`;
+    const sourceKey = buildSourceKey(sheetName, sheetRow);
+    const contentKey = buildContentKey(sheetName, sheetRow);
 
     const title = getCell(headers, row, mapping.titleCols);
     if (!title) {
       skippedRows += 1;
-      log(scope, "skip missing title", { sheetRow, rowPreview: row.slice(0, 12) });
+      if (skippedRows <= 5) {
+        log(scope, "skip missing title", {
+          sheetRow,
+          rowPreview: row.slice(0, 12),
+        });
+      }
       continue;
     }
 
@@ -346,50 +357,21 @@ export async function syncSheetBatch(
       specialData[field] = getCell(headers, row, candidates);
     }
 
-    const contentKey = buildContentKey({
-      sheetName,
-      type: mapping.type as ContentType,
-      title,
-      author: specialData.author,
-      cp: specialData.cp,
-      originalWork: specialData.originalWork,
-      doujinka: specialData.doujinka,
-      fanficTitle: specialData.fanficTitle,
-    });
-
     const existing = await prisma.content.findUnique({
       where: { contentKey },
       select: {
-        id: true,
         imageUrl: true,
         sourceImageUrl: true,
       },
     });
 
-    let finalImageUrl: string | null = existing?.imageUrl ?? null;
-    let finalSourceImageUrl: string | null = existing?.sourceImageUrl ?? null;
+    const finalImageUrl = resolveFinalImageUrl({
+      existingImageUrl: existing?.imageUrl ?? null,
+      existingSourceImageUrl: existing?.sourceImageUrl ?? null,
+      sourceImageUrl,
+    });
 
-    if (sourceImageUrl) {
-      finalSourceImageUrl = sourceImageUrl;
-
-      if (!existing || existing.sourceImageUrl !== sourceImageUrl || !existing.imageUrl) {
-        const uploaded = await uploadImageFromUrl(sourceImageUrl);
-
-        if (uploaded) {
-          finalImageUrl = uploaded;
-          imageUploadedRows += 1;
-        } else {
-          imageFailedRows += 1;
-          finalImageUrl = existing?.imageUrl ?? sourceImageUrl;
-        }
-      } else {
-        imageKeptRows += 1;
-        finalImageUrl = existing.imageUrl;
-      }
-    } else if (existing?.imageUrl) {
-      finalImageUrl = existing.imageUrl;
-      imageKeptRows += 1;
-    }
+    const finalSourceImageUrl = sourceImageUrl ?? existing?.sourceImageUrl ?? null;
 
     await prisma.content.upsert({
       where: { contentKey },
@@ -440,9 +422,6 @@ export async function syncSheetBatch(
     processedRows,
     savedRows,
     skippedRows,
-    imageUploadedRows,
-    imageKeptRows,
-    imageFailedRows,
     done,
     nextBatch,
   });
@@ -460,9 +439,6 @@ export async function syncSheetBatch(
     processedRows,
     savedRows,
     skippedRows,
-    imageUploadedRows,
-    imageKeptRows,
-    imageFailedRows,
   };
 }
 
@@ -540,37 +516,26 @@ export async function syncWorkbookChunk(
 }
 
 export async function syncWorkbook() {
-  const allSheets: SyncBatchResult[] = [];
-  let processedRows = 0;
-  let savedRows = 0;
-  let skippedRows = 0;
+  const summary = {
+    ok: true as const,
+    sheets: [] as Awaited<ReturnType<typeof syncSheetBatch>>[],
+  };
 
   for (const sheetName of SHEET_NAMES) {
     let batchStart = 0;
 
     while (true) {
-      const result = await syncSheetBatch(sheetName, batchStart, DEFAULT_BATCH_SIZE);
-      allSheets.push(result);
-
-      processedRows += result.processedRows;
-      savedRows += result.savedRows;
-      skippedRows += result.skippedRows;
+      const result = await syncSheetBatch(
+        sheetName,
+        batchStart,
+        DEFAULT_BATCH_SIZE
+      );
+      summary.sheets.push(result);
 
       if (result.done || result.nextBatch === null) break;
       batchStart = result.nextBatch;
     }
   }
 
-  return {
-    ok: true as const,
-    done: true,
-    nextCursor: null,
-    batchesRun: allSheets.length,
-    sheets: allSheets,
-    totals: {
-      processedRows,
-      savedRows,
-      skippedRows,
-    },
-  };
+  return summary;
 }

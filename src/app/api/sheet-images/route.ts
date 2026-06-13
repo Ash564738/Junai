@@ -1,6 +1,7 @@
 // src/app/api/sheet-images/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { buildContentKey, normalizeKey } from "@/lib/content-key";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,14 +20,7 @@ type Body = {
   rows?: SheetImageRow[];
 };
 
-function normalize(v: string | null | undefined) {
-  return String(v ?? "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
-function toNull(value: unknown): string | null {
+function toText(value: unknown): string | null {
   const s = String(value ?? "").trim();
   return s ? s : null;
 }
@@ -54,21 +48,24 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const incomingTitle = toNull(row.title);
+    const incomingTitle = toText(row.title);
     const incomingSourceImageUrl =
-      toNull(row.sourceImageUrl) ||
-      toNull(row.imageUrl) ||
-      toNull(row.cloudinaryUrl);
+      toText(row.sourceImageUrl) ||
+      toText(row.imageUrl) ||
+      toText(row.cloudinaryUrl);
 
     const incomingFinalImageUrl =
-      toNull(row.cloudinaryUrl) ||
-      toNull(row.imageUrl) ||
-      toNull(row.sourceImageUrl);
+      toText(row.cloudinaryUrl) ||
+      toText(row.imageUrl) ||
+      toText(row.sourceImageUrl);
 
     if (!incomingTitle || !incomingFinalImageUrl) {
       skipped += 1;
       continue;
     }
+
+    const derivedContentKey =
+      toText(row.contentKey) || buildContentKey(row.sheetName, row.sheetRow);
 
     let existing:
       | {
@@ -79,17 +76,17 @@ export async function POST(req: NextRequest) {
         }
       | null = null;
 
-    if (row.contentKey) {
-      existing = await prisma.content.findUnique({
-        where: { contentKey: row.contentKey },
-        select: {
-          id: true,
-          title: true,
-          imageUrl: true,
-          sourceImageUrl: true,
-        },
-      });
-    }
+    existing = await prisma.content.findUnique({
+      where: { contentKey: derivedContentKey },
+      select: {
+        id: true,
+        title: true,
+        imageUrl: true,
+        sourceImageUrl: true,
+      },
+    });
+
+    const usedFallback = !existing;
 
     if (!existing) {
       existing = await prisma.content.findFirst({
@@ -112,7 +109,7 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    if (normalize(existing.title) !== normalize(incomingTitle)) {
+    if (usedFallback && normalizeKey(existing.title) !== normalizeKey(incomingTitle)) {
       console.log(
         `[sheet-images] title mismatch skipped: sheet=${row.sheetName} row=${row.sheetRow} existing="${existing.title}" incoming="${incomingTitle}"`
       );
@@ -121,8 +118,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      normalize(existing.sourceImageUrl) === normalize(incomingSourceImageUrl) &&
-      normalize(existing.imageUrl) === normalize(incomingFinalImageUrl)
+      normalizeKey(existing.sourceImageUrl) === normalizeKey(incomingSourceImageUrl) &&
+      normalizeKey(existing.imageUrl) === normalizeKey(incomingFinalImageUrl)
     ) {
       unchanged += 1;
       continue;
