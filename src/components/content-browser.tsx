@@ -33,7 +33,7 @@ type QueryState = {
 
 const PAGE_SIZE = 24;
 const STATUS_OPTIONS = [
-  "Hoàn", "Hoàn thành", "On-going", "On-going dịch", "Chưa có bản dịch",
+  "Hoàn", "End", "On-going", "On-going dịch", "Chưa có bản dịch",
   "Drop", "Nhà dịch drop", "Nhà dịch bay màu", "Oneshot", "Tạm ngưng",
 ] as const;
 

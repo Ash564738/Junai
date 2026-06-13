@@ -8,9 +8,10 @@ export const dynamic = "force-dynamic";
 type SheetImageRow = {
   sheetName: string;
   sheetRow: number;
-  sourceImageUrl?: string;
-  cloudinaryUrl?: string;
-  imageUrl?: string;
+  title?: string;
+  sourceImageUrl?: string | null;
+  cloudinaryUrl?: string | null;
+  imageUrl?: string | null;
 };
 
 type Body = {
@@ -41,10 +42,12 @@ export async function POST(req: NextRequest) {
     }
 
     const sourceKey = `${row.sheetName}:${row.sheetRow}`;
+
     const existing = await prisma.content.findUnique({
       where: { sourceKey },
       select: {
         id: true,
+        title: true,
         imageUrl: true,
         sourceImageUrl: true,
       },
@@ -56,15 +59,15 @@ export async function POST(req: NextRequest) {
     }
 
     const incomingSourceImageUrl =
-      row.sourceImageUrl?.trim() ||
-      row.imageUrl?.trim() ||
-      row.cloudinaryUrl?.trim() ||
+      (row.sourceImageUrl && row.sourceImageUrl.trim()) ||
+      (row.imageUrl && row.imageUrl.trim()) ||
+      (row.cloudinaryUrl && row.cloudinaryUrl.trim()) ||
       null;
 
     const incomingFinalImageUrl =
-      row.cloudinaryUrl?.trim() ||
-      row.imageUrl?.trim() ||
-      row.sourceImageUrl?.trim() ||
+      (row.cloudinaryUrl && row.cloudinaryUrl.trim()) ||
+      (row.imageUrl && row.imageUrl.trim()) ||
+      (row.sourceImageUrl && row.sourceImageUrl.trim()) ||
       null;
 
     if (!incomingFinalImageUrl) {
@@ -78,6 +81,12 @@ export async function POST(req: NextRequest) {
     ) {
       unchanged += 1;
       continue;
+    }
+
+    if (row.title && existing.title && row.title.trim() !== existing.title.trim()) {
+      console.log(
+        `[sheet-images] title changed at ${sourceKey}: existing="${existing.title}" incoming="${row.title}"`
+      );
     }
 
     await prisma.content.update({
