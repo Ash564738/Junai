@@ -66,7 +66,7 @@ function buildUrl(basePath: string, current: QueryState, patch: Partial<QuerySta
   return qs ? `${basePath}?${qs}` : basePath;
 }
 
-function badgeClass(type: string) {
+export function badgeClass(type: string) {
   const map: Record<string, string> = {
     TRUYEN_CHU: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
     MANGA: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-600/20",
@@ -248,7 +248,11 @@ export async function ContentBrowser({
               >
                 <div className="aspect-[3/4] overflow-hidden bg-zinc-100">
                   {item.imageUrl ? (
-                    <img src={item.imageUrl} alt={item.title} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]" />
+                    <img
+                      src={item.imageUrl}
+                      alt={item.title}
+                      className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                    />
                   ) : (
                     <div className="flex h-full items-center justify-center text-xs text-zinc-400">No image</div>
                   )}
@@ -257,13 +261,13 @@ export async function ContentBrowser({
                 <div className="space-y-3 p-4">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span
-                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset ${badgeClass(item.type)}`}
+                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium leading-none ring-1 ring-inset ${badgeClass(item.type)}`}
                     >
                       {CONTENT_TYPE_LABELS[item.type] ?? item.type}
                     </span>
                     {item.status && (
                       <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset ${statusClass(item.status)}`}
+                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium leading-none ring-1 ring-inset ${statusClass(item.status)}`}
                       >
                         {item.status}
                       </span>
@@ -286,7 +290,7 @@ export async function ContentBrowser({
                       {visiblePurity.map((tag) => (
                         <span
                           key={tag}
-                          className="rounded-md px-2 py-1 text-[11px] font-medium"
+                          className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium leading-none ring-1 ring-inset"
                           style={purityTagStyle(tag)}
                         >
                           {tag}
@@ -296,9 +300,7 @@ export async function ContentBrowser({
                   )}
 
                   {item.summary && (
-                    <p className="text-xs leading-relaxed text-zinc-500">
-                      {excerpt(item.summary, 120)}
-                    </p>
+                    <p className="text-xs leading-relaxed text-zinc-500">{excerpt(item.summary, 120)}</p>
                   )}
 
                   {visibleGenres.length > 0 && (

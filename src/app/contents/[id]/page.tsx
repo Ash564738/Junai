@@ -2,7 +2,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import prisma from "@/lib/prisma";
-import { CONTENT_TYPE_LABELS } from "@/components/content-browser";
+import { CONTENT_TYPE_LABELS, badgeClass } from "@/components/content-browser";
 import { purityTagStyle, statusClass } from "@/lib/tag-colors";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +32,9 @@ export default async function ContentDetailPage({
             {item.imageUrl ? (
               <img src={item.imageUrl} alt={item.title} className="h-full w-full object-cover" />
             ) : (
-              <div className="flex aspect-[3/4] items-center justify-center text-sm text-zinc-400">No image</div>
+              <div className="flex aspect-[3/4] items-center justify-center text-sm text-zinc-400">
+                No image
+              </div>
             )}
           </div>
 
@@ -50,10 +52,14 @@ export default async function ContentDetailPage({
 
         <div className="space-y-6">
           <div className="flex flex-wrap gap-2">
-            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-700">
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium leading-none ring-1 ring-inset ${badgeClass(item.type)}`}
+            >
               {CONTENT_TYPE_LABELS[item.type] ?? item.type}
             </span>
-            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${statusClass(item.status)}`}>
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium leading-none ring-1 ring-inset ${statusClass(item.status)}`}
+            >
               {item.status ?? "Không rõ"}
             </span>
           </div>
@@ -65,12 +71,14 @@ export default async function ContentDetailPage({
 
           {(item.purityTags ?? []).length > 0 && (
             <div>
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Độ khiết / cảnh báo</h2>
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Độ khiết / cảnh báo
+              </h2>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {item.purityTags.map((tag) => (
                   <span
                     key={tag}
-                    className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset"
+                    className="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium leading-none ring-1 ring-inset"
                     style={purityTagStyle(tag)}
                   >
                     {tag}
@@ -94,7 +102,9 @@ export default async function ContentDetailPage({
             <div className="space-y-6">
               {item.summary && (
                 <div>
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Tóm tắt / review</h2>
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Tóm tắt / review
+                  </h2>
                   <p className="mt-2 whitespace-pre-wrap rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm leading-relaxed text-zinc-700">
                     {item.summary}
                   </p>
@@ -103,7 +113,9 @@ export default async function ContentDetailPage({
 
               {item.genres.length > 0 && (
                 <div>
-                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Thể loại</h2>
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Thể loại
+                  </h2>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {item.genres.map((g) => (
                       <span

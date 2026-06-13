@@ -19,19 +19,12 @@ function hexToRgba(hex: string, alpha = 0.14): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function style(
-  bg: string,
-  text: string,
-  border?: string,
-  alpha = 0.14
-): CSSProperties {
+function style(bg: string, text: string, ringColor?: string, alpha = 0.14): CSSProperties {
   return {
     backgroundColor: hexToRgba(bg, alpha),
     color: text,
-
-    // dùng ring giống badge Hoàn
-    boxShadow: `inset 0 0 0 1px ${border ?? bg}`,
-  };
+    ["--tw-ring-color" as any]: ringColor ?? bg,
+  } as CSSProperties;
 }
 
 function normalizeTag(tag: string): string {
@@ -102,9 +95,7 @@ export function statusClass(status?: string | null) {
   const s = (status ?? "").trim().toLowerCase();
   if (s === "hoàn" || s.includes("end"))
     return "bg-emerald-50 text-emerald-700 ring-emerald-600/20";
-  if (s.includes("on-going"))
-    return "bg-sky-50 text-sky-700 ring-sky-600/20";
-  if (s.includes("chưa có bản dịch"))
+  if (s.includes("chưa có bản dịch") || s.includes("on-going"))
     return "bg-amber-50 text-amber-700 ring-amber-600/20";
   if (s.includes("drop") || s.includes("bay màu"))
     return "bg-red-50 text-red-700 ring-red-600/20";
